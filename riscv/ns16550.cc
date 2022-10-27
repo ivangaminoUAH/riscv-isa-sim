@@ -75,11 +75,11 @@ ns16550_t::ns16550_t(class bus_t *bus, abstract_interrupt_controller_t *intctrl,
 {
   ier = 0;
   iir = UART_IIR_NO_INT;
-  fcr = 0;
+  fcr = 1;
   lcr = 0;
   lsr = UART_LSR_TEMT | UART_LSR_THRE;
   msr = UART_MSR_DCD | UART_MSR_DSR | UART_MSR_CTS;
-  dll = 0x0C;
+  dll = 0x21;
   mcr = UART_MCR_OUT2;
   scr = 0;
 }
@@ -89,8 +89,8 @@ void ns16550_t::update_interrupt(void)
   uint8_t interrupts = 0;
 
   /* Handle clear rx */
-  if (lcr & UART_FCR_CLEAR_RCVR) {
-    lcr &= ~UART_FCR_CLEAR_RCVR;
+  if (fcr & UART_FCR_CLEAR_RCVR) {
+    fcr &= ~UART_FCR_CLEAR_RCVR;
     while (!rx_queue.empty()) {
       rx_queue.pop();
     }
@@ -98,8 +98,8 @@ void ns16550_t::update_interrupt(void)
   }
 
   /* Handle clear tx */
-  if (lcr & UART_FCR_CLEAR_XMIT) {
-    lcr &= ~UART_FCR_CLEAR_XMIT;
+  if (fcr & UART_FCR_CLEAR_XMIT) {
+    fcr &= ~UART_FCR_CLEAR_XMIT;
     lsr |= UART_LSR_TEMT | UART_LSR_THRE;
   }
 
@@ -156,7 +156,21 @@ uint8_t ns16550_t::rx_byte(void)
 void ns16550_t::tx_byte(uint8_t val)
 {
   lsr |= UART_LSR_TEMT | UART_LSR_THRE;
-  canonical_terminal_t::write(val);
+
+  std::pair <reg_t, abstract_device_t*> UART_plugin = bus->find_device(EXT_IO_BASE);
+  //std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << " abstract_device_t: " << std::to_string(UART_plugin.second) << std::endl;
+  //std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << std::endl;
+  if (UART_plugin.first == EXT_IO_BASE){
+    uint8_t bytes = val;
+
+    if(bus->store(EXT_IO_BASE, 1, (const uint8_t*)&bytes)){
+      //std::cout << "Transmited TX byte through ttyS3" << std::endl;
+    }
+  }
+  else{
+    canonical_terminal_t::write(val);
+  }
+  
 }
 
 bool ns16550_t::load(reg_t addr, size_t len, uint8_t* bytes)
@@ -215,7 +229,7 @@ bool ns16550_t::load(reg_t addr, size_t len, uint8_t* bytes)
   if (update) {
     update_interrupt();
   }
-
+  //std::cerr << "LOAD: " << addr << ", " << std::to_string(val) << ", " << ret << std::endl;
   return ret;
 }
 
@@ -288,7 +302,7 @@ bool ns16550_t::store(reg_t addr, size_t len, const uint8_t* bytes)
   if (update) {
     update_interrupt();
   }
-
+  //std::cerr << "STORE: " << addr << ", " << std::to_string(val) << ", " << ret << std::endl;
   return ret;
 }
 
@@ -300,7 +314,35 @@ void ns16550_t::tick(void)
     return;
   }
 
-  int rc = canonical_terminal_t::read();
+  int rc;
+
+  std::pair <reg_t, abstract_device_t*> UART_plugin = bus->find_device(EXT_IO_BASE);
+  //std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << " abstract_device_t: " << std::to_string(UART_plugin.second) << std::endl;
+  //std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << std::endl;
+/*
+  UART_plugin = bus->find_device(0x2000);
+  //std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << " abstract_device_t: " << std::to_string(UART_plugin.second) << std::endl;
+  std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << std::endl;
+
+  UART_plugin = bus->find_device(0x87FFFE00);
+  //std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << " abstract_device_t: " << std::to_string(UART_plugin.second) << std::endl;
+  std::cout << "reg_t: "<< std::to_string(UART_plugin.first) << std::endl;
+*/
+
+  if (UART_plugin.first == EXT_IO_BASE){
+    uint8_t bytes;
+    if(bus->load(EXT_IO_BASE,1,(uint8_t*)&bytes)){
+      rc = bytes;
+      //std::cout << "Received RX byte through ttyS3" << std::endl;
+    }
+    else{
+      rc = -1;
+    }
+  }
+  else{
+    rc = canonical_terminal_t::read();
+  }
+
   if (rc < 0) {
     return;
   }
